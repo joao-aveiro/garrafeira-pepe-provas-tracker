@@ -1,0 +1,9 @@
+{
+  "name": "provas-tracker-worker",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260101.0",
+    "typescript": "^5.4.0"
+  }
+}

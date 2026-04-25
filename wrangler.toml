@@ -1,0 +1,15 @@
+name = "provas-tracker"
+main = "src/index.ts"
+compatibility_date = "2026-04-25"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+AMELIA_URL = "https://garrafeirapepe.pt/wp-admin/admin-ajax.php?action=wpamelia_api&call=/events&bookings=false"
+PROVAS_URL = "https://garrafeirapepe.pt/provas/"
+USER_AGENT = "GarrafeiraPepeMonitor/1.0 (+https://github.com/joao-aveiro/garrafeira-pepe-provas-tracker)"
+
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

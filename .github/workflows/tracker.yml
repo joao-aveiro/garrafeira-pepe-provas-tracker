@@ -1,10 +1,12 @@
 name: Provas tracker
 
 on:
-  schedule:
-    # Offset 2 min from the hour boundary to dodge GitHub's peak-load
-    # window where scheduled jobs are commonly delayed or dropped.
-    - cron: "2-59/5 * * * *"
+  # Cron disabled. GitHub Actions' scheduler drops a large fraction of
+  # runs under load and is unsuitable for time-sensitive polling. Manual
+  # runs via workflow_dispatch still work; re-enable the schedule below
+  # if you accept the unreliability.
+  #   schedule:
+  #     - cron: "2-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -29,16 +31,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MONITOR_USER_AGENT: "GarrafeiraPepeMonitor/1.0 (+https://github.com/${{ github.repository }})"
-        run: python main.py
+        run: python python/main.py
 
       - name: Persist state
         run: |
-          if git diff --quiet state.json; then
+          if git diff --quiet python/state.json; then
             echo "No state change."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state.json
+          git add python/state.json
           git commit -m "chore(state): update seen_ids ($(date -u +%Y-%m-%dT%H:%MZ))"
           git push

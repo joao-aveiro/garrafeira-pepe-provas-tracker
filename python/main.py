@@ -127,7 +127,7 @@ def extract_wines(description: str) -> list[str]:
     return cleaned
 
 
-def extract_intro(description: str, max_chars: int = 280) -> str:
+def extract_intro(description: str, max_chars: int = 500) -> str:
     paragraphs = re.findall(
         r"<p[^>]*>(.*?)</p>",
         description or "",
@@ -147,7 +147,7 @@ def extract_intro(description: str, max_chars: int = 280) -> str:
         ):
             continue
         pieces.append(text)
-        if sum(len(p) for p in pieces) >= 100:
+        if sum(len(p) for p in pieces) >= 200:
             break
     text = " ".join(pieces)
     if len(text) > max_chars:
