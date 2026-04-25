@@ -250,7 +250,7 @@ def write_summary(
     if not path:
         return
     now_str = datetime.now(LISBON).strftime("%Y-%m-%d %H:%M %Z")
-    lines = [f"# Provas tracker - {now_str}", ""]
+    lines = [f"# Run {now_str}", ""]
 
     if fetch_error:
         lines.append(f"## ❌ Fetch failed\n\n```\n{fetch_error}\n```\n")

@@ -1,4 +1,4 @@
-name: poll-provas
+name: Provas tracker
 
 on:
   schedule:
