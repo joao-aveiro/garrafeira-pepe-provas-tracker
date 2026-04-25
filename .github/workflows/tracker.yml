@@ -2,18 +2,20 @@ name: Provas tracker
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Offset 2 min from the hour boundary to dodge GitHub's peak-load
+    # window where scheduled jobs are commonly delayed or dropped.
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: poll-provas
+  group: provas-tracker
   cancel-in-progress: false
 
 jobs:
-  poll:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +24,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run poller
+      - name: Check for new tastings
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MONITOR_USER_AGENT: "GarrafeiraPepeMonitor/1.0 (+https://github.com/${{ github.repository }})"
         run: python main.py
 
-      - name: Commit state changes
+      - name: Persist state
         run: |
           if git diff --quiet state.json; then
             echo "No state change."
