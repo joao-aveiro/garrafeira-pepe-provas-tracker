@@ -1,9 +1,12 @@
-name = "provas-tracker"
+name = "garrafeira-pepe-provas-tracker"
 main = "src/index.ts"
 compatibility_date = "2026-04-25"
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+[observability]
+enabled = true
 
 [vars]
 AMELIA_URL = "https://garrafeirapepe.pt/wp-admin/admin-ajax.php?action=wpamelia_api&call=/events&bookings=false"
