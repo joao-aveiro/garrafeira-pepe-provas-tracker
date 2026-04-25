@@ -12,4 +12,4 @@ USER_AGENT = "GarrafeiraPepeMonitor/1.0 (+https://github.com/joao-aveiro/garrafe
 
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "6c829393049a442cb91d0ff0fa81e1cc"
