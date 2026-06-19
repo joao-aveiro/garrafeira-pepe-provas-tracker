@@ -61,15 +61,22 @@ def fetch_amelia_events() -> list[dict]:
 
 def load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"seen_ids": []}
+        return {"seen_ids": [], "notified_ids": []}
     try:
-        return json.loads(STATE_PATH.read_text())
+        state = json.loads(STATE_PATH.read_text())
     except json.JSONDecodeError:
-        return {"seen_ids": []}
+        return {"seen_ids": [], "notified_ids": []}
+    # Back-compat: pre-split state has no notified_ids. Treat everything
+    # already seen as already notified so the first run doesn't re-blast the
+    # backlog; an explicit edit frees any id that was never really sent.
+    if "notified_ids" not in state:
+        state["notified_ids"] = list(state.get("seen_ids", []))
+    return state
 
 
 def save_state(state: dict) -> None:
     state["seen_ids"] = sorted(set(state.get("seen_ids", [])))
+    state["notified_ids"] = sorted(set(state.get("notified_ids", [])))
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
@@ -240,10 +247,9 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
 
 def write_summary(
     events: list[dict],
-    seen_before: set[int],
+    notified_before: set[int],
     notified: set[int],
     failed: set[int],
-    skipped_past: set[int],
     fetch_error: str | None = None,
 ) -> None:
     path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -259,16 +265,12 @@ def write_summary(
 
     lines.append(f"- Events fetched from API: **{len(events)}**")
     lines.append(
-        f"- Already known: **{len(seen_before & {e.get('id') for e in events})}**"
+        f"- Already notified: **{len(notified_before & {e.get('id') for e in events})}**"
     )
     lines.append(f"- Notifications sent: **{len(notified)}**")
     if failed:
         lines.append(
             f"- ⚠️ Notifications failed (will retry next run): **{len(failed)}** - ids {sorted(failed)}"
-        )
-    if skipped_past:
-        lines.append(
-            f"- New but past-dated (no notification): ids {sorted(skipped_past)}"
         )
     lines.append("")
     lines.append("| id | date | € | name | status |")
@@ -286,8 +288,6 @@ def write_summary(
             tag = "🆕 notified"
         elif eid in failed:
             tag = "⚠️ failed - retry"
-        elif eid in skipped_past:
-            tag = "🆕 (past)"
         else:
             tag = ""
         name = (e.get("name") or "")[:60].replace("|", "\\|")
@@ -308,27 +308,32 @@ def main() -> int:
 
     state = load_state()
     seen_before: set[int] = set(state.get("seen_ids", []))
+    notified_before: set[int] = set(state.get("notified_ids", []))
     now = datetime.now(LISBON)
 
     api_ids: set[int] = {e["id"] for e in events if e.get("id") is not None}
-    new_ids = api_ids - seen_before
-    new_events = [e for e in events if e.get("id") in new_ids]
+    newly_appeared = api_ids - seen_before
 
     notified: set[int] = set()
     failed: set[int] = set()
-    skipped_past: set[int] = set()
 
-    for event in new_events:
+    # Notify on what's future-and-not-yet-delivered, re-evaluated every run.
+    # We never suppress on mere observation, so a dateless-on-publish or a
+    # deleted-and-re-added event fires once it presents a future period.
+    for event in events:
         eid = event.get("id")
+        if eid in notified_before:
+            continue
         if not is_future(event, now):
-            skipped_past.add(eid)
             continue
 
         message = format_message(event)
         print(f"--- notify id={eid} ---\n{message}\n")
 
         if not (token and chat_id):
-            print("(no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID; dry-run, not marked seen)")
+            print(
+                "(no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID; dry-run, not marked notified)"
+            )
             continue
 
         try:
@@ -338,21 +343,20 @@ def main() -> int:
             print(f"Notification failed for id={eid}: {exc!r}", file=sys.stderr)
             failed.add(eid)
 
-    # State update rule: only mark seen what we've successfully handled.
-    # - notified: yes (sent ok)
-    # - skipped_past: yes (no need to notify, but we don't want to re-evaluate)
-    # - failed: NO, leave for next run to retry
-    # - already-seen: keep
-    state["seen_ids"] = sorted(seen_before | notified | skipped_past)
+    # seen_ids records everything observed (diagnostics only); notified_ids is
+    # the suppression set and grows only on a successful send, so failed sends
+    # retry on the next run.
+    state["seen_ids"] = sorted(seen_before | api_ids)
+    state["notified_ids"] = sorted(notified_before | notified)
     state["last_check"] = now.isoformat()
     save_state(state)
 
-    write_summary(events, seen_before, notified, failed, skipped_past)
+    write_summary(events, notified_before, notified, failed)
 
     print(
         f"Fetched {len(events)} events; "
-        f"new={len(new_events)} notified={len(notified)} "
-        f"failed={len(failed)} past={len(skipped_past)}"
+        f"new={len(newly_appeared)} notified={len(notified)} "
+        f"failed={len(failed)}"
     )
     return 0
 

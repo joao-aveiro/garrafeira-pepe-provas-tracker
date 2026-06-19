@@ -3,9 +3,14 @@
  * schedule and posts a Telegram message for every newly published wine
  * tasting whose first period is in the future.
  *
- * State (the set of event IDs already notified) lives in Workers KV under
- * the "state" key. Failed Telegram sends are NOT marked seen, so the next
- * cron tick retries them.
+ * State lives in Workers KV under the "state" key and tracks two separate
+ * sets: `seen_ids` (every event id ever observed, for diagnostics only) and
+ * `notified_ids` (ids we've actually delivered a Telegram message for). Only
+ * `notified_ids` suppresses a send. An event is a notification candidate on
+ * every tick while it is future and not yet notified, so events that are
+ * published before their date is set - or deleted and re-added - self-heal
+ * once they present a future period. Failed sends enter neither set, so the
+ * next cron tick retries them.
  */
 
 export interface Env {
@@ -32,6 +37,7 @@ export interface AmeliaEvent {
 
 interface State {
   seen_ids: number[];
+  notified_ids: number[];
   last_check?: string;
 }
 
@@ -65,16 +71,24 @@ export async function fetchAmeliaEvents(env: Env): Promise<AmeliaEvent[]> {
 
 async function loadState(env: Env): Promise<State> {
   const raw = await env.STATE.get(STATE_KEY);
-  if (!raw) return { seen_ids: [] };
+  if (!raw) return { seen_ids: [], notified_ids: [] };
   try {
-    return JSON.parse(raw) as State;
+    const parsed = JSON.parse(raw) as Partial<State>;
+    const seen_ids = parsed.seen_ids ?? [];
+    // Back-compat: pre-split state has no notified_ids. Treat everything
+    // already seen as already notified so a deploy doesn't re-blast the
+    // backlog; the explicit KV migration frees any id that was never sent.
+    const notified_ids = parsed.notified_ids ?? seen_ids;
+    return { seen_ids, notified_ids, last_check: parsed.last_check };
   } catch {
-    return { seen_ids: [] };
+    return { seen_ids: [], notified_ids: [] };
   }
 }
 
 async function saveState(env: Env, state: State): Promise<void> {
-  state.seen_ids = [...new Set(state.seen_ids)].sort((a, b) => a - b);
+  const dedupeSort = (xs: number[]) => [...new Set(xs)].sort((a, b) => a - b);
+  state.seen_ids = dedupeSort(state.seen_ids);
+  state.notified_ids = dedupeSort(state.notified_ids);
   await env.STATE.put(STATE_KEY, JSON.stringify(state));
 }
 
@@ -244,21 +258,21 @@ async function runOnce(env: Env): Promise<void> {
   const events = await fetchAmeliaEvents(env);
   const state = await loadState(env);
   const seenBefore = new Set(state.seen_ids);
+  const notifiedBefore = new Set(state.notified_ids);
   const now = nowLisbonString();
 
-  const apiIds = new Set(events.map((e) => e.id).filter((id) => id != null));
-  const newIds = new Set([...apiIds].filter((id) => !seenBefore.has(id)));
-  const newEvents = events.filter((e) => newIds.has(e.id));
+  const apiIds = events.map((e) => e.id).filter((id) => id != null);
+  const newlyAppeared = apiIds.filter((id) => !seenBefore.has(id));
 
+  // Notify on what's future-and-not-yet-delivered, re-evaluated every tick.
+  // We never suppress on mere observation, so a dateless-on-publish or a
+  // deleted-and-re-added event fires once it presents a future period.
   const notified = new Set<number>();
   const failed = new Set<number>();
-  const skippedPast = new Set<number>();
 
-  for (const event of newEvents) {
-    if (!isFuture(event, now)) {
-      skippedPast.add(event.id);
-      continue;
-    }
+  for (const event of events) {
+    if (notifiedBefore.has(event.id)) continue;
+    if (!isFuture(event, now)) continue;
     try {
       await sendTelegram(env, formatMessage(event, env));
       notified.add(event.id);
@@ -268,15 +282,17 @@ async function runOnce(env: Env): Promise<void> {
     }
   }
 
-  // Mark seen only what we actually handled. Failed events stay out so the
-  // next tick retries them.
-  state.seen_ids = [...new Set([...seenBefore, ...notified, ...skippedPast])];
+  // seen_ids absorbs everything observed (diagnostics only); notified_ids is
+  // the suppression set and grows only on a successful send, so failed sends
+  // retry on the next tick.
+  state.seen_ids = [...new Set([...seenBefore, ...apiIds])];
+  state.notified_ids = [...new Set([...notifiedBefore, ...notified])];
   state.last_check = new Date().toISOString();
   await saveState(env, state);
 
   console.log(
-    `events=${events.length} new=${newEvents.length} notified=${notified.size} ` +
-      `failed=${failed.size} past=${skippedPast.size}`,
+    `events=${events.length} new=${newlyAppeared.length} ` +
+      `notified=${notified.size} failed=${failed.size}`,
   );
 }
 
