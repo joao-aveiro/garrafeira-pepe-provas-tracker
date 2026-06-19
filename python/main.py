@@ -228,12 +228,19 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
                 raise RuntimeError(f"Telegram API rejected: {body}")
             return
         except urllib.error.HTTPError as exc:
-            if exc.code != 429 or attempt >= TELEGRAM_MAX_RETRIES:
-                raise
+            # Read the body once; Telegram's `description` names the exact
+            # problem (e.g. "chat not found"), which the status code hides.
             try:
-                err_body = json.loads(exc.read())
+                err_text = exc.read().decode(errors="replace")
+            except Exception:
+                err_text = ""
+            if exc.code != 429 or attempt >= TELEGRAM_MAX_RETRIES:
+                raise RuntimeError(
+                    f"Telegram HTTP {exc.code}: {err_text[:300]}"
+                ) from exc
+            try:
                 retry_after = float(
-                    err_body.get("parameters", {}).get("retry_after", 1)
+                    json.loads(err_text).get("parameters", {}).get("retry_after", 1)
                 )
             except (json.JSONDecodeError, ValueError, TypeError):
                 retry_after = 2.0**attempt

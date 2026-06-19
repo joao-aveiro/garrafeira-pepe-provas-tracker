@@ -250,7 +250,16 @@ export async function sendTelegram(env: Env, text: string): Promise<void> {
       continue;
     }
 
-    throw new Error(`Telegram HTTP ${resp.status}`);
+    // Include Telegram's response body - its `description` field names the
+    // exact problem (e.g. "chat not found", "can't parse entities"), which a
+    // bare status code hides.
+    let detail = "";
+    try {
+      detail = (await resp.text()).slice(0, 300);
+    } catch {
+      /* body unavailable */
+    }
+    throw new Error(`Telegram HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
   }
 }
 
